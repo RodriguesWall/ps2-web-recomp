@@ -75,12 +75,18 @@ std::map<std::uint32_t, Call> g_held_calls;
 std::map<std::uint32_t, std::deque<Request>> g_requests;
 std::map<std::uint32_t, int> g_queue_threads;
 std::map<std::uint32_t, CmdHandler> g_cmd_handlers;
+// User commands (cid without bit 31) that arrived before an IOP module registered their handler. On the console
+// the module's thread runs and registers it before the EE gets to send; here the IOP may not have been scheduled
+// yet, so hold them and deliver once sceSifAddCmdHandler has run. Guitar Hero III's FILEIO.IRX needs this.
+std::deque<std::vector<std::uint8_t>> g_held_cmds;
+constexpr std::size_t kMaxHeldCmds = 64;
 std::uint32_t g_sreg[32] = {};
 std::map<std::uint32_t, int> g_iop_clients;
 std::uint32_t g_iop_rpc_id = 1;
 std::uint32_t g_loop_stub = 0, g_finish_stub = 0;
 std::uint32_t g_iop_dma_id = 1, g_ee_dma_id = 1;
 std::uint64_t g_ee_dma_done = 0;
+constexpr std::uint64_t kReplyLatency = 0x4000; // EE cycles, ~56 us
 
 template <typename T>
 T ee_read(std::uint32_t a) {
@@ -251,7 +257,13 @@ void command(std::uint32_t src, std::uint32_t size) {
     default: {
         auto it = g_cmd_handlers.find(h->cid);
         if (it == g_cmd_handlers.end()) {
-            std::fprintf(stderr, "[sif] command 0x%08X has no handler (from ee buffer 0x%08X)\n", h->cid, src);
+            if (!(h->cid & 0x80000000u)) {
+                if (g_held_cmds.size() >= kMaxHeldCmds) g_held_cmds.pop_front();
+                g_held_cmds.emplace_back(packet, packet + std::min<std::uint32_t>(size, 0x400u));
+                std::fprintf(stderr, "[sif] command 0x%08X has no handler yet, held until one is registered\n", h->cid);
+            } else {
+                std::fprintf(stderr, "[sif] command 0x%08X has no handler (from ee buffer 0x%08X)\n", h->cid, src);
+            }
             break;
         }
         std::memcpy(iop::ram_ptr(kCmdBuffer), packet, std::min<std::uint32_t>(size, 0x400u));
@@ -687,6 +699,7 @@ void reset() {
     g_requests.clear();
     g_queue_threads.clear();
     g_cmd_handlers.clear();
+    g_held_cmds.clear();
     g_iop_clients.clear();
     std::memset(g_sreg, 0, sizeof g_sreg);
     g_iop_dma_id = g_ee_dma_id = 1;
@@ -738,7 +751,24 @@ void packet_processed() {
     pump();
 }
 
+static void deliver_held_commands() {
+    for (auto it = g_held_cmds.begin(); it != g_held_cmds.end();) {
+        const auto *h = reinterpret_cast<const Header *>(it->data());
+        const auto handler = g_cmd_handlers.find(h->cid);
+        if (handler == g_cmd_handlers.end()) {
+            ++it;
+            continue;
+        }
+        std::fprintf(stderr, "[sif] delivering held command 0x%08X\n", h->cid);
+        std::memcpy(iop::ram_ptr(kCmdBuffer), it->data(), it->size());
+        const CmdHandler target = handler->second;
+        it = g_held_cmds.erase(it);
+        iop::kernel::call_guest(target.handler, kCmdBuffer, target.data);
+    }
+}
+
 void pump() {
+    if (!g_held_cmds.empty()) deliver_held_commands();
     const std::uint64_t t = now();
     for (auto it = g_binds.begin(); it != g_binds.end();) {
         if (t > it->second.deadline) {
@@ -753,6 +783,11 @@ void pump() {
     }
     if (g_options.trace_iop_hle && !g_outgoing.empty() && !g_processed) std::fprintf(stderr, "[sif] %zu packets wait for the EE\n", g_outgoing.size());
     if (!g_processed || g_outgoing.empty() || !g_ee_recv) return;
+    // The IOP cannot answer a command before the EE's SIF DMA carrying it has finished, and on the console its reply
+    // takes far longer than that. Replying sooner lets the EE's command handler run while the sender still polls
+    // sceSifDmaStat (yielding between polls), and Guitar Hero III then reads a freed request slot: its open stores
+    // handle -1 and every read after it hangs.
+    if (t < g_ee_dma_done + kReplyLatency) return;
     if (g_options.trace_iop_modules) {
         std::uint32_t cid;
         std::memcpy(&cid, g_outgoing.front().data() + 8, 4);

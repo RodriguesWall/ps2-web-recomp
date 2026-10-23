@@ -330,7 +330,9 @@ std::uint32_t read_voice(Core &k, std::uint32_t off) {
         case 0x4: return v.pitch;
         case 0x6: return v.adsr1;
         case 0x8: return v.adsr2;
-        case 0xA: return static_cast<std::uint32_t>(v.env.level);
+        // A key-on waits for the next mixing batch, but the console starts the attack on the next sample: report it
+        // as begun, or a driver that polls ENVX right after KON (Guitar Hero III's MSTREAM) takes the voice for ended.
+        case 0xA: return v.key_on ? 1u : static_cast<std::uint32_t>(v.env.level);
         case 0xC: return static_cast<std::uint32_t>(v.vol[0].level);
         default: return static_cast<std::uint32_t>(v.vol[1].level);
         }

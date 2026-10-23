@@ -428,7 +428,11 @@ void service(Cpu &c) {
             else run_intc(c, static_cast<unsigned>(std::countr_zero(pending)));
         }
     }
-    if (g_reschedule || c.pc == kIdle) reschedule(c);
+    // A thread whose entry function returns lands on kIdle (its initial ra): on the console that is ExitThread. Left
+    // running there it keeps the CPU from every thread of its priority (Guitar Hero III's movie decoder starves the
+    // main thread once the intro ends).
+    if (c.pc == kIdle && current() && current()->status == kRun) exit_current(c, false);
+    else if (g_reschedule || c.pc == kIdle) reschedule(c);
     c.pc &= ~kUnwind;
 }
 
