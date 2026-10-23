@@ -224,6 +224,8 @@ void poll() {
             SDL_SetWindowFullscreen(g_window, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
             SDL_ShowCursor(full ? SDL_ENABLE : SDL_DISABLE);
         }
+        if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F5 && !e.key.repeat)
+            ps2::request_save_state(ps2::g_options.save_state_path.empty() ? "quick.state" : ps2::g_options.save_state_path);
         if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED && g_gpu_present) {
             int w = 0, h = 0;
             SDL_GetWindowSizeInPixels(g_window, &w, &h);

@@ -98,7 +98,7 @@ WebGPU is required for 3D. Chrome and Edge have it on Windows and macOS; on Linu
 | D-pad | Arrow keys |
 | Left stick | I J K L (arrow keys in the native runner) |
 
-Gamepads work in both (analog triggers act as pressure-sensitive L2/R2, with vibration). Phones get on-screen controls; F toggles fullscreen.
+Gamepads work in both (analog triggers act as pressure-sensitive L2/R2, with vibration). Phones get on-screen controls; F toggles fullscreen. In the native window F11 toggles fullscreen and F5 saves a state (to the `--save-state` file, or `quick.state`), which `--load-state` resumes.
 
 ## Saves
 

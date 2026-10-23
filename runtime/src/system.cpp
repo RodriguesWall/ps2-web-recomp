@@ -301,6 +301,11 @@ void machine_state(state::Stream &s) {
 
 }
 
+void request_save_state(const std::string &path) {
+    g_options.save_state_path = path;
+    g_state_request = true;
+}
+
 bool save_state(const std::string &path) {
     try {
         state::Writer w;
