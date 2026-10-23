@@ -2,12 +2,14 @@
 
 #include "gs.hpp"
 #include "queue.hpp"
+#include "ps2/system.hpp"
 
 #include "ps2/state.hpp"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace ps2::gif {
 
@@ -144,10 +146,51 @@ void scan(Path &p, const std::uint8_t *data, std::uint32_t qwc) {
 
 Path g_scan[4];
 
+// Held channel 2 data, one FIFO per side: [0] the emulation thread, [1] the VU thread that renders VIF1 when it runs.
+std::vector<std::uint8_t> g_path3[2];
+bool g_path3_masked[2];
+// Frame of the last MSKPATH3 window on each side; ~0 for never.
+std::uint64_t g_last_window[2] = {~0ull, ~0ull};
+
+int side() { return gs::queue::role() == gs::queue::Role::Vu ? 1 : 0; }
+
+// Bytes of the first complete GIF packet (up to and including the data of the tag with EOP) held for PATH3, or 0.
+std::size_t packet_bytes(const std::vector<std::uint8_t> &fifo) {
+    const std::size_t qwords = fifo.size() / 16;
+    std::size_t at = 0;
+    while (at < qwords) {
+        std::uint64_t tag;
+        std::memcpy(&tag, fifo.data() + at * 16, 8);
+        const std::uint64_t nloop = tag & 0x7FFFu, flg = (tag >> 58) & 3u, nreg = ((tag >> 60) & 0xFu) ? (tag >> 60) & 0xFu : 16u;
+        at += 1 + (flg == 0 ? nloop * nreg : flg == 1 ? (nloop * nreg + 1) / 2 : nloop);
+        if (at > qwords) return 0;
+        if ((tag >> 15) & 1u) return at * 16;
+    }
+    return 0;
+}
+
+bool send_packet(int s) {
+    std::vector<std::uint8_t> &fifo = g_path3[s];
+    const std::size_t bytes = packet_bytes(fifo);
+    if (!bytes) return false;
+    transfer(3, fifo.data(), static_cast<std::uint32_t>(bytes / 16));
+    fifo.erase(fifo.begin(), fifo.begin() + static_cast<std::ptrdiff_t>(bytes));
+    return true;
+}
+
+void send_all(int s) {
+    while (send_packet(s)) {}
+}
+
 }
 
 void reset() {
     g_stat = 0;
+    for (int s = 0; s < 2; ++s) {
+        g_path3[s].clear();
+        g_path3_masked[s] = false;
+        g_last_window[s] = ~0ull;
+    }
     if (gs::queue::active()) {
         for (Path &p : g_scan) p = Path{};
         gs::queue::post(gs::queue::kGifReset, 0, 0, nullptr, 0);
@@ -199,9 +242,40 @@ void write(std::uint32_t a, std::uint32_t v) {
 }
 
 void set_path3_masked(bool masked) {
+    g_path3_masked[side()] = masked;
     g_stat = (g_stat & ~2u) | (masked ? 2u : 0u);
     static const bool trace = std::getenv("PS2_TRACE_PATH3") != nullptr;
     if (trace) std::fprintf(stderr, "[gif] path3 %s\n", masked ? "masked" : "unmasked");
+}
+
+void path3_data(const std::uint8_t *data, std::uint32_t qwc) {
+    if (gs::queue::vu_active()) {
+        // The emulation thread answers SIGNAL/FINISH and downloads now; the VU thread draws the packets in order.
+        scan(g_scan[3], data, qwc);
+        gs::queue::vu().post(gs::queue::kPath3, qwc, 0, data, qwc * 16);
+        return;
+    }
+    path3_receive(data, qwc);
+}
+
+void path3_receive(const std::uint8_t *data, std::uint32_t qwc) {
+    const int s = side();
+    const std::uint64_t frame = ps2::frame_count();
+    if (g_last_window[s] == ~0ull || frame - g_last_window[s] > 2) {
+        send_all(s);
+        transfer(3, data, qwc);
+        return;
+    }
+    // What the previous display list's windows left behind would have gone out before this new stream on a console.
+    if (!g_path3_masked[s]) send_all(s);
+    std::vector<std::uint8_t> &fifo = g_path3[s];
+    fifo.insert(fifo.end(), data, data + static_cast<std::size_t>(qwc) * 16);
+}
+
+void path3_window() {
+    const int s = side();
+    g_last_window[s] = ps2::frame_count();
+    send_packet(s);
 }
 
 }

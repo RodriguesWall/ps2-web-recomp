@@ -70,7 +70,7 @@ void deliver(int ch, std::uint32_t address, std::uint32_t qwc) {
     switch (ch) {
     case 0: vif::transfer(0, data, qwc); break;
     case 1: vif::transfer(1, data, qwc); break;
-    case 2: gif::transfer(3, data, qwc); break;
+    case 2: gif::path3_data(data, qwc); break;
     case 9:
         for (std::uint32_t i = 0; i < qwc; ++i)
             std::memcpy(g_spr + ((g_ch[9].sadr + i * 16) & (kScratchpadSize - 1)), data + i * 16, 16);
