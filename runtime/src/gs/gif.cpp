@@ -151,6 +151,8 @@ std::vector<std::uint8_t> g_path3[2];
 bool g_path3_masked[2];
 // Frame of the last MSKPATH3 window on each side; ~0 for never.
 std::uint64_t g_last_window[2] = {~0ull, ~0ull};
+// A window has opened since the last channel 2 data: the next data starts a new stream.
+bool g_window_since_data[2];
 
 int side() { return gs::queue::role() == gs::queue::Role::Vu ? 1 : 0; }
 
@@ -190,6 +192,7 @@ void reset() {
         g_path3[s].clear();
         g_path3_masked[s] = false;
         g_last_window[s] = ~0ull;
+        g_window_since_data[s] = false;
     }
     if (gs::queue::active()) {
         for (Path &p : g_scan) p = Path{};
@@ -267,7 +270,8 @@ void path3_receive(const std::uint8_t *data, std::uint32_t qwc) {
         return;
     }
     // What the previous display list's windows left behind would have gone out before this new stream on a console.
-    if (!g_path3_masked[s]) send_all(s);
+    if (g_window_since_data[s]) send_all(s);
+    g_window_since_data[s] = false;
     std::vector<std::uint8_t> &fifo = g_path3[s];
     fifo.insert(fifo.end(), data, data + static_cast<std::size_t>(qwc) * 16);
 }
@@ -275,6 +279,7 @@ void path3_receive(const std::uint8_t *data, std::uint32_t qwc) {
 void path3_window() {
     const int s = side();
     g_last_window[s] = ps2::frame_count();
+    g_window_since_data[s] = true;
     send_packet(s);
 }
 
