@@ -1640,6 +1640,7 @@ bool attach_surface(const SurfaceTarget &target) {
 #else
     WGPUSurfaceSourceXlibWindow xlib = WGPU_SURFACE_SOURCE_XLIB_WINDOW_INIT;
     WGPUSurfaceSourceWaylandSurface wayland = WGPU_SURFACE_SOURCE_WAYLAND_SURFACE_INIT;
+    WGPUSurfaceSourceMetalLayer metal = WGPU_SURFACE_SOURCE_METAL_LAYER_INIT;
     if (target.kind == SurfaceTarget::X11) {
         xlib.display = target.display;
         xlib.window = target.window;
@@ -1648,6 +1649,9 @@ bool attach_surface(const SurfaceTarget &target) {
         wayland.display = target.display;
         wayland.surface = target.surface;
         sd.nextInChain = &wayland.chain;
+    } else if (target.kind == SurfaceTarget::Metal && target.surface) {
+        metal.layer = target.surface;
+        sd.nextInChain = &metal.chain;
     } else {
         return false;
     }

@@ -15,7 +15,8 @@ struct DisplaySource {
 };
 
 struct SurfaceTarget {
-    enum Kind { X11, Wayland, Canvas } kind;
+    // Keep the order in step with ps2::WindowTarget::Kind, gs::attach_window passes it as an int.
+    enum Kind { X11, Wayland, Canvas, Metal } kind;
     void *display;
     std::uint64_t window;
     void *surface;

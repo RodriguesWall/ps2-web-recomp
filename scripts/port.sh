@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+  for b in /opt/homebrew/bin/bash /usr/local/bin/bash; do [ -x "$b" ] && exec "$b" "$0" "$@"; done
+  echo "these scripts need bash 4 or newer (macOS ships 3.2): brew install bash" >&2
+  exit 1
+fi
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 here="$ROOT/scripts"

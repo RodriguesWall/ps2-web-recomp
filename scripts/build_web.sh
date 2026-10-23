@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Builds the web version of a recompiled game into build/web-<game>.
 # usage: scripts/build_web.sh <game folder under games/> [emsdk dir]
 set -e
