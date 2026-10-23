@@ -16,6 +16,7 @@
 #include <deque>
 #include <stdexcept>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace ps2::sif {
@@ -80,6 +81,8 @@ std::map<std::uint32_t, CmdHandler> g_cmd_handlers;
 // yet, so hold them and deliver once sceSifAddCmdHandler has run. Guitar Hero III's FILEIO.IRX needs this.
 std::deque<std::vector<std::uint8_t>> g_held_cmds;
 constexpr std::size_t kMaxHeldCmds = 64;
+bool g_handler_added = false;
+std::set<std::uint32_t> g_unhandled_cids;
 std::uint32_t g_sreg[32] = {};
 std::map<std::uint32_t, int> g_iop_clients;
 std::uint32_t g_iop_rpc_id = 1;
@@ -260,7 +263,8 @@ void command(std::uint32_t src, std::uint32_t size) {
             if (!(h->cid & 0x80000000u)) {
                 if (g_held_cmds.size() >= kMaxHeldCmds) g_held_cmds.pop_front();
                 g_held_cmds.emplace_back(packet, packet + std::min<std::uint32_t>(size, 0x400u));
-                std::fprintf(stderr, "[sif] command 0x%08X has no handler yet, held until one is registered\n", h->cid);
+                if (g_unhandled_cids.insert(h->cid).second)
+                    std::fprintf(stderr, "[sif] command 0x%08X has no handler yet, held until one is registered\n", h->cid);
             } else {
                 std::fprintf(stderr, "[sif] command 0x%08X has no handler (from ee buffer 0x%08X)\n", h->cid, src);
             }
@@ -392,6 +396,7 @@ void install_iop_side() {
     def("sifcmd", 8, "sceSifSetCmdBuffer", [](iop::Cpu &c) { c.r[2] = 0; });
     def("sifcmd", 10, "sceSifAddCmdHandler", [](iop::Cpu &c) {
         g_cmd_handlers[arg(c, 0)] = CmdHandler{arg(c, 1), arg(c, 2)};
+        g_handler_added = true;
         c.r[2] = 0;
     });
     def("sifcmd", 11, "sceSifRemoveCmdHandler", [](iop::Cpu &c) { g_cmd_handlers.erase(arg(c, 0)); c.r[2] = 0; });
@@ -700,6 +705,8 @@ void reset() {
     g_queue_threads.clear();
     g_cmd_handlers.clear();
     g_held_cmds.clear();
+    g_handler_added = false;
+    g_unhandled_cids.clear();
     g_iop_clients.clear();
     std::memset(g_sreg, 0, sizeof g_sreg);
     g_iop_dma_id = g_ee_dma_id = 1;
@@ -768,7 +775,11 @@ static void deliver_held_commands() {
 }
 
 void pump() {
-    if (!g_held_cmds.empty()) deliver_held_commands();
+    // Only a newly registered handler can take a held command; the pump runs far too often to scan them every time.
+    if (g_handler_added) {
+        g_handler_added = false;
+        if (!g_held_cmds.empty()) deliver_held_commands();
+    }
     const std::uint64_t t = now();
     for (auto it = g_binds.begin(); it != g_binds.end();) {
         if (t > it->second.deadline) {
